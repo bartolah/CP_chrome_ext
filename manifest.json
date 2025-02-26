@@ -1,13 +1,20 @@
 {
-  "manifest_version": 3,
+"manifest_version": 3,
   "name": "Crowdpac Post Creator",
   "version": "1.0",
   "description": "Create a new post on Crowdpac.com using the current page's information.",
-  "permissions": ["cookies", "tabs", "scripting", "storage", "identity", "activeTab"],
+  "permissions": ["cookies", "tabs", "storage", "scripting", "activeTab"],
   "host_permissions": ["https://crowdpac.com/*"],
   "background": {
     "service_worker": "background.js"
   },
+  "content_scripts": [
+    {
+      "matches": ["https://crowdpac.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "16": "icon.png",
     "48": "icon.png",
