@@ -10,7 +10,6 @@ function submitPostDirectly(content, sendResponse) {
 
     const apiUrl = "https://crowdpac.com/apiv2/opinion/none";
 
-    // Get Authentication Cookie
     chrome.cookies.get({ url: "https://crowdpac.com", name: "cpsss" }, function (cookie) {
         if (!cookie || !cookie.value) {
             console.error("Error: Authentication cookie missing.");
@@ -20,7 +19,6 @@ function submitPostDirectly(content, sendResponse) {
 
         console.log("Auth token retrieved:", cookie.value);
 
-        // Retrieve CSRF token from the form input field
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
             if (!tabs.length) {
                 console.error("Error: No active tab found.");
@@ -30,31 +28,25 @@ function submitPostDirectly(content, sendResponse) {
 
             const activeTab = tabs[0];
 
-            // Ensure the page is fully loaded before extracting the CSRF token
+            // Ensure the script runs in the right context
             chrome.scripting.executeScript({
                 target: { tabId: activeTab.id },
                 func: () => {
-                    return new Promise((resolve) => {
-                        const checkForToken = () => {
-                            let csrfField = document.querySelector('input[id="csrf-token"]');
-                            if (csrfField && csrfField.value) {
-                                resolve(csrfField.value);
-                            } else {
-                                setTimeout(checkForToken, 500);
-                            }
-                        };
-                        checkForToken();
-                    });
+                    let csrfField = document.querySelector('input[id="csrf-token"]');
+                    if (!csrfField) {
+                        console.error("CSRF token field not found.");
+                        return null;
+                    }
+                    return csrfField.value;
                 }
             }).then((results) => {
-                const csrfToken = results && results[0] && results[0].result ? results[0].result : "";
-
-                if (!csrfToken) {
-                    console.error("Final attempt: CSRF token still missing.");
+                if (!results || !results[0] || !results[0].result) {
+                    console.error("CSRF token retrieval failed.");
                     sendResponse({ status: "Error: CSRF token missing." });
                     return;
                 }
 
+                const csrfToken = results[0].result;
                 console.log("CSRF token successfully retrieved:", csrfToken);
                 sendPostRequest(apiUrl, content, csrfToken, cookie.value, sendResponse);
             }).catch(error => {
@@ -73,7 +65,8 @@ function sendPostRequest(apiUrl, content, csrfToken, authToken, sendResponse) {
         "Accept": "application/json, text/plain, */*",
         "X-CSRF-Token": csrfToken,
         "Authorization": `Bearer ${authToken}`,
-        "Cookie": `cpsss=${authToken}`
+        "Cookie": `cpsss=${authToken}`,
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36"
     };
 
     const postData = {
