@@ -10,6 +10,7 @@ function submitPostDirectly(content, sendResponse) {
 
     const apiUrl = "https://crowdpac.com/apiv2/opinion/none";
 
+    // Get Authentication Cookie
     chrome.cookies.get({ url: "https://crowdpac.com", name: "cpsss" }, function (cookie) {
         if (!cookie || !cookie.value) {
             console.error("Error: Authentication cookie missing.");
@@ -19,6 +20,7 @@ function submitPostDirectly(content, sendResponse) {
 
         console.log("Auth token retrieved:", cookie.value);
 
+        // Retrieve CSRF token from the form input field
         chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
             if (!tabs.length) {
                 console.error("Error: No active tab found.");
@@ -38,8 +40,8 @@ function submitPostDirectly(content, sendResponse) {
                 const csrfToken = results && results[0] && results[0].result ? results[0].result : "";
 
                 if (!csrfToken) {
-                    console.error("Failed to retrieve CSRF token from hidden form field.");
-                    sendResponse({ status: "Error: CSRF token missing." });
+                    console.error("CSRF token missing. Retrying in 1 second...");
+                    setTimeout(() => retryCsrfExtraction(activeTab.id, content, cookie.value, sendResponse), 1000);
                     return;
                 }
 
@@ -53,9 +55,35 @@ function submitPostDirectly(content, sendResponse) {
     });
 }
 
+// Retry CSRF extraction if it fails initially
+function retryCsrfExtraction(tabId, content, authToken, sendResponse) {
+    chrome.scripting.executeScript({
+        target: { tabId: tabId },
+        func: () => {
+            let csrfField = document.querySelector('input[id="csrf-token"]');
+            return csrfField ? csrfField.value : "";
+        }
+    }).then((results) => {
+        const csrfToken = results && results[0] && results[0].result ? results[0].result : "";
+
+        if (!csrfToken) {
+            console.error("Final attempt: CSRF token still missing.");
+            sendResponse({ status: "Error: CSRF token missing after retry." });
+            return;
+        }
+
+        console.log("CSRF token successfully retrieved on retry:", csrfToken);
+        sendPostRequest("https://crowdpac.com/apiv2/opinion/none", content, csrfToken, authToken, sendResponse);
+    }).catch(error => {
+        console.error("Error retrying CSRF extraction:", error);
+        sendResponse({ status: "Error retrying CSRF extraction: " + error.message });
+    });
+}
+
 function sendPostRequest(apiUrl, content, csrfToken, authToken, sendResponse) {
     console.log("Sending post request with CSRF token:", csrfToken);
 
+    // Prepare headers
     const headers = {
         "Content-Type": "application/json;charset=UTF-8",
         "Accept": "application/json, text/plain, */*",
@@ -64,6 +92,7 @@ function sendPostRequest(apiUrl, content, csrfToken, authToken, sendResponse) {
         "Cookie": `cpsss=${authToken}`
     };
 
+    // Construct post payload
     const postData = {
         text: content.trim(),
         visibility: "public",
