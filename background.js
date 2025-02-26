@@ -1,71 +1,55 @@
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-    if (request.action === "create_post") {
-        submitPostDirectly(request.content, sendResponse);
-        return true; // Keeps the response open for async calls
-    }
-});
+function openCrowdpacAndExtractCsrf(content, sendResponse) {
+    console.log("Opening Crowdpac to extract CSRF token...");
 
-function submitPostDirectly(content, sendResponse) {
-    console.log("Submitting post via Crowdpac API...");
+    chrome.tabs.create({ url: "https://crowdpac.com", active: false }, function (newTab) {
+        console.log("Crowdpac tab opened. Waiting for page to load...");
 
-    const apiUrl = "https://crowdpac.com/apiv2/opinion/none";
+        // Wait for tab to fully load before injecting the script
+        chrome.tabs.onUpdated.addListener(function listener(tabId, changeInfo) {
+            if (tabId === newTab.id && changeInfo.status === "complete") {
+                console.log("Crowdpac page fully loaded. Extracting CSRF token...");
 
-    chrome.cookies.get({ url: "https://crowdpac.com", name: "cpsss" }, function (cookie) {
-        if (!cookie || !cookie.value) {
-            console.error("Error: Authentication cookie missing.");
-            sendResponse({ status: "Error: User not logged in or missing authentication." });
-            return;
-        }
+                // Remove listener to prevent multiple triggers
+                chrome.tabs.onUpdated.removeListener(listener);
 
-        console.log("Auth token retrieved:", cookie.value);
-
-        chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-            if (!tabs.length) {
-                console.error("Error: No active tab found.");
-                sendResponse({ status: "Error: No active tab found." });
-                return;
-            }
-
-            const activeTab = tabs[0];
-
-            // Ensure the script runs in the right context
-            chrome.scripting.executeScript({
-                target: { tabId: activeTab.id },
-                func: () => {
-                    let csrfField = document.querySelector('input[id="csrf-token"]');
-                    if (!csrfField) {
-                        console.error("CSRF token field not found.");
-                        return null;
+                // Inject script to extract CSRF token
+                chrome.scripting.executeScript({
+                    target: { tabId: newTab.id },
+                    func: () => {
+                        let csrfField = document.querySelector('input[id="csrf-token"]');
+                        return csrfField ? csrfField.value : null;
                     }
-                    return csrfField.value;
-                }
-            }).then((results) => {
-                if (!results || !results[0] || !results[0].result) {
-                    console.error("CSRF token retrieval failed.");
-                    sendResponse({ status: "Error: CSRF token missing." });
-                    return;
-                }
+                }).then((results) => {
+                    if (!results || !results[0] || !results[0].result) {
+                        console.error("CSRF token extraction failed.");
+                        sendResponse({ status: "Error: CSRF token missing." });
+                        return;
+                    }
 
-                const csrfToken = results[0].result;
-                console.log("CSRF token successfully retrieved:", csrfToken);
-                sendPostRequest(apiUrl, content, csrfToken, cookie.value, sendResponse);
-            }).catch(error => {
-                console.error("Error executing script:", error);
-                sendResponse({ status: "Error executing script: " + error.message });
-            });
+                    const csrfToken = results[0].result;
+                    console.log("Extracted CSRF token:", csrfToken);
+
+                    // Close the temporary tab
+                    chrome.tabs.remove(newTab.id);
+
+                    // Continue with the post request
+                    sendPostRequest("https://crowdpac.com/apiv2/opinion/none", content, csrfToken, sendResponse);
+                }).catch(error => {
+                    console.error("Error extracting CSRF token:", error);
+                    sendResponse({ status: "Error extracting CSRF token: " + error.message });
+                });
+            }
         });
     });
 }
 
-function sendPostRequest(apiUrl, content, csrfToken, authToken, sendResponse) {
+function sendPostRequest(apiUrl, content, csrfToken, sendResponse) {
     console.log("Sending post request with CSRF token:", csrfToken);
 
     const headers = {
         "Content-Type": "application/json;charset=UTF-8",
         "Accept": "application/json, text/plain, */*",
         "X-CSRF-Token": csrfToken,
-        "Authorization": `Bearer ${authToken}`,
-        "Cookie": `cpsss=${authToken}`,
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/99.0.4844.84 Safari/537.36"
     };
 
